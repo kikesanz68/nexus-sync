@@ -1,0 +1,22 @@
+# Archivos y carpetas de PyInstaller
+build/
+dist/
+*.spec
+*.exe
+
+# Cache de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Base de datos SQLite anterior
+nexus_sync_data.db
+
+# Configuración de entornos virtuales
+venv/
+env/
+.env
+
+# Archivos de text/excel de salida
+Altas_*.txt
+Reporte_Altas_*.xlsx
