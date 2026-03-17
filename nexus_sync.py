@@ -97,7 +97,6 @@ class App(ctk.CTk):
         self.entry_prod.pack(pady=5)
         
         # Menú contextual de Copiar/Pegar para el campo Descripción
-        # Menú contextual de Copiar/Pegar para el campo Descripción
         self.menu_contextual_prod = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white",
                                             activebackground="#28a745", activeforeground="white")
         self.menu_contextual_prod.add_command(label="📋  Copiar", command=self.copiar_descripcion)
