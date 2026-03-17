@@ -6,11 +6,19 @@ from datetime import datetime
 import os
 import psycopg2
 import pandas as pd
+from dotenv import load_dotenv
+
+# Cargamos las variables secretas (contraseñas/tokens)
+load_dotenv()
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 class App(ctk.CTk):
+    """
+    Clase principal de la aplicación.
+    Contiene toda la estructura visual y la lógica de negocio para gestionar el historial.
+    """
     def __init__(self):
         super().__init__()
 
@@ -21,10 +29,17 @@ class App(ctk.CTk):
         self.lista_productos_widgets = []
         self.fila_en_edicion = None
         self.codigo_nube_en_edicion = None
+        self.codigo_siguiente = None  # Código que se va a dar de alta automáticamente
 
         # --- CONFIGURACIÓN DE BASE DE DATOS SUPABASE ---
-        # Se elimina el URI con contraseña en el código final por seguridad y se deja preconfigurado.
-        self.db_uri = "postgresql://postgres:junior1998TEAMOPAOLA1998@db.rwejnmnbuyzgrlphacah.supabase.co:5432/postgres"
+        # Cargamos la conexión de manera segura usando variables de entorno que no se suben a Git
+        self.db_uri = os.getenv("SUPABASE_DB_URI")
+        
+        if not self.db_uri:
+            messagebox.showerror("Error Crítico", "No se encontró el archivo .env o la variable SUPABASE_DB_URI.")
+            self.destroy() # Cerramos si no hay conexión segura
+            return
+            
         try:
             self.conn = psycopg2.connect(self.db_uri)
             self.cursor = self.conn.cursor()
@@ -66,24 +81,52 @@ class App(ctk.CTk):
         self.unit_menu.pack(pady=5)
 
         self.crear_label(self.frame_izquierdo, "Código:")
-        self.entry_cod = ctk.CTkEntry(self.frame_izquierdo, placeholder_text="Solo números", width=300)
+        self.entry_cod = ctk.CTkEntry(
+            self.frame_izquierdo,
+            placeholder_text="Auto-generado",
+            width=300,
+            state="disabled",          # Bloqueado: el sistema lo rellena
+            text_color="#00ff88",
+            fg_color="#1a2b1a",
+            border_color="#28a745"
+        )
         self.entry_cod.pack(pady=5)
 
         self.crear_label(self.frame_izquierdo, "Descripción:")
         self.entry_prod = ctk.CTkEntry(self.frame_izquierdo, placeholder_text="Nombre del producto...", width=300)
         self.entry_prod.pack(pady=5)
         
-        # Etiqueta de retroalimentación en vivo
+        # Menú contextual de Copiar/Pegar para el campo Descripción
+        # Menú contextual de Copiar/Pegar para el campo Descripción
+        self.menu_contextual_prod = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white",
+                                            activebackground="#28a745", activeforeground="white")
+        self.menu_contextual_prod.add_command(label="📋  Copiar", command=self.copiar_descripcion)
+        self.menu_contextual_prod.add_command(label="📎  Pegar",  command=self.pegar_descripcion)
+        self.entry_prod.bind("<Button-3>", self.mostrar_menu_contextual_prod)  # Click derecho
+        
+        # Label de feedback (oculto — ya no se valida descripción en vivo)
         self.lbl_feedback = ctk.CTkLabel(self.frame_izquierdo, text="", font=("Roboto", 12, "bold"))
         self.lbl_feedback.pack(pady=(0, 5))
-        
-        # Eventos para consultar en vivo
-        self.entry_cod.bind("<KeyRelease>", self.programar_validacion_vivo)
-        self.entry_prod.bind("<KeyRelease>", self.programar_validacion_vivo)
+        # Sin bind KeyRelease en entry_prod: el campo es solo de captura, sin buscar en BD
 
         # Botones de Acción Izquierda
         self.btn_accion_principal = ctk.CTkButton(self.frame_izquierdo, text="AÑADIR A LISTA", fg_color="#28a745", hover_color="#218838", height=45, font=("Roboto", 14, "bold"), command=self.procesar_accion_principal)
-        self.btn_accion_principal.pack(pady=20)
+        self.btn_accion_principal.pack(pady=(20, 8))
+
+        # --- PANEL DE CÓDIGO SIGUIENTE ---
+        self.frame_codigo_sig = ctk.CTkFrame(self.frame_izquierdo, fg_color="#1a2b1a", border_width=2, border_color="#28a745", corner_radius=12)
+        self.frame_codigo_sig.pack(pady=(0, 10), padx=30, fill="x")
+
+        ctk.CTkLabel(self.frame_codigo_sig, text="📋 CÓDIGO SIGUIENTE A DAR DE ALTA",
+                     font=("Roboto", 10, "bold"), text_color="#7dcf7d").pack(pady=(8, 0))
+
+        self.lbl_codigo_sig = ctk.CTkLabel(self.frame_codigo_sig, text="Cargando...",
+                                           font=("Roboto", 32, "bold"), text_color="#00ff88")
+        self.lbl_codigo_sig.pack(pady=(2, 4))
+
+        self.lbl_aviso_sig = ctk.CTkLabel(self.frame_codigo_sig, text="",
+                                          font=("Roboto", 10), text_color="#aaaaaa")
+        self.lbl_aviso_sig.pack(pady=(0, 8))
 
         self.btn_nube = ctk.CTkButton(self.frame_izquierdo, text="GUARDAR EN NUBE ☁️", fg_color="#0066cc", hover_color="#0052a3", height=45, font=("Roboto", 14, "bold"), command=self.guardar_en_nube)
         self.btn_nube.pack(pady=(0, 20))
@@ -139,6 +182,9 @@ class App(ctk.CTk):
         # Evento de cierre
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        # Calcular y mostrar el código siguiente al iniciar
+        self.after(300, self.actualizar_codigo_siguiente)
+
     def on_closing(self):
         if hasattr(self, 'conn'):
             self.conn.close()
@@ -165,52 +211,115 @@ class App(ctk.CTk):
             self.entry_search.insert(tk.INSERT, texto)
             self.filtrar_busqueda(None)
 
+    def mostrar_menu_contextual_prod(self, event):
+        """Menú contextual click derecho para el campo Descripción."""
+        self.menu_contextual_prod.tk_popup(event.x_root, event.y_root)
+
+    def copiar_descripcion(self):
+        try:
+            texto = self.entry_prod.selection_get()
+        except tk.TclError:
+            texto = self.entry_prod.get()  # Si no hay selección, copia todo
+        if texto:
+            pyperclip.copy(texto)
+
+    def pegar_descripcion(self):
+        texto = pyperclip.paste()
+        if texto:
+            try:
+                self.entry_prod.delete(tk.SEL_FIRST, tk.SEL_LAST)
+            except tk.TclError:
+                pass
+            self.entry_prod.insert(tk.INSERT, texto)
+            self.programar_validacion_vivo(None)
+
     def crear_label(self, master, texto):
         lbl = ctk.CTkLabel(master, text=texto, font=("Roboto", 12))
         lbl.pack(pady=(5, 0))
 
+    def _set_cod(self, valor):
+        """Helper: habilita el campo código (bloqueado), escribe el valor, lo bloquea
+        y actualiza el panel de 'Código Siguiente' para mostrar valor+1."""
+        self.entry_cod.configure(state="normal")
+        self.entry_cod.delete(0, 'end')
+        self.entry_cod.insert(0, str(valor))
+        self.entry_cod.configure(state="disabled")
+        # El panel siempre muestra el que viene DESPUÉS del que está en el campo
+        try:
+            siguiente_display = int(valor) + 1
+            self.lbl_codigo_sig.configure(text=str(siguiente_display), text_color="#00ff88")
+            self.lbl_aviso_sig.configure(text=f"(En campo: {valor})", text_color="#888888")
+        except (ValueError, AttributeError):
+            pass
+
+    # --- LÓGICA DE CÓDIGO SIGUIENTE ---
+
+    def obtener_maximo_codigo_nube(self):
+        """
+        Consulta la base de datos y retorna el mayor código numérico registrado.
+        Si no hay registros numéricos, retorna 66056 como base.
+        """
+        try:
+            conn = psycopg2.connect(self.db_uri, connect_timeout=4)
+            cur = conn.cursor()
+            # Obtenemos el máximo código numérico de la tabla
+            cur.execute("""
+                SELECT MAX(CAST(codigo AS BIGINT))
+                FROM historial
+                WHERE codigo ~ '^[0-9]+$'
+            """)
+            resultado = cur.fetchone()
+            cur.close()
+            conn.close()
+            if resultado and resultado[0] is not None:
+                return int(resultado[0])
+            else:
+                return 66057  # Base si la tabla está vacía o sin códigos numéricos
+        except Exception as e:
+            print("No se pudo obtener el máximo código:", e)
+            return None
+
+    def actualizar_codigo_siguiente(self):
+        """
+        Calcula el siguiente código disponible (máximo + 1), lo pone en el campo
+        y el panel muestra automáticamente ese valor + 1 (via _set_cod).
+        """
+        maximo = self.obtener_maximo_codigo_nube()
+        if maximo is not None:
+            self.codigo_siguiente = maximo + 1
+            # Solo rellenar el campo si no hay edición activa
+            if not self.entry_cod.get().strip() and self.fila_en_edicion is None and self.codigo_nube_en_edicion is None:
+                self._set_cod(self.codigo_siguiente)
+            else:
+                # Aunque no rellene el campo, actualiza el panel con el valor actual del campo
+                try:
+                    val_actual = int(self.entry_cod.get().strip())
+                    self.lbl_codigo_sig.configure(text=str(val_actual + 1), text_color="#00ff88")
+                    self.lbl_aviso_sig.configure(text=f"(En campo: {val_actual})", text_color="#888888")
+                except ValueError:
+                    pass
+        else:
+            self.lbl_codigo_sig.configure(text="Sin conexión", text_color="#ff6666")
+            self.lbl_aviso_sig.configure(text="Verifique la conexión a la nube", text_color="#ff6666")
+
     # --- LÓGICA DE MEJORAS ---
 
     def programar_validacion_vivo(self, event):
-        if hasattr(self, '_val_timer'):
-            self.after_cancel(self._val_timer)
-        self._val_timer = self.after(500, self.validar_en_vivo)
-        
+        """Reservado — ya no se usa para búsqueda en BD."""
+        pass
+
     def validar_en_vivo(self):
-        cod = self.entry_cod.get().strip()
-        prod = self.entry_prod.get().strip()
-        
-        if not cod and not prod:
-            self.lbl_feedback.configure(text="")
-            return
-            
-        try:
-            conn = psycopg2.connect(self.db_uri, connect_timeout=2)
-            cur = conn.cursor()
-            query = "SELECT codigo, producto FROM historial WHERE "
-            conditions = []
-            params = []
-            if cod:
-                conditions.append("codigo = %s")
-                params.append(cod)
-            if prod:
-                conditions.append("producto ILIKE %s")
-                params.append(prod)
-                
-            cur.execute(query + " OR ".join(conditions) + " LIMIT 1", params)
-            match = cur.fetchone()
-            cur.close()
-            conn.close()
-            
-            if match:
-                self.lbl_feedback.configure(text=f"⚠️ Ya registrado: {match[0]} - {match[1]}", text_color="#ffc107")
-            else:
-                self.lbl_feedback.configure(text="✅ Código/Producto disponible", text_color="#28a745")
-                
-        except Exception:
-            self.lbl_feedback.configure(text="")
+        """Reservado — ya no busca en BD desde el campo descripción."""
+        pass
 
     def procesar_accion_principal(self):
+        """
+        [MÓDULO DE ACCIÓN DE BOTÓN AÑADIR/ACTUALIZAR]
+        Decide el comportamiento del botón verde basándose en el contexto actual:
+        - Si edita un producto de la nube -> Llama a actualizar_en_nube()
+        - Si edita un producto de la lista temporal -> Llama a finalizar_edicion()
+        - Si es un producto nuevo -> Llama a agregar_a_lista()
+        """
         if self.codigo_nube_en_edicion is not None:
             self.actualizar_en_nube()
         elif self.fila_en_edicion is None:
@@ -219,6 +328,12 @@ class App(ctk.CTk):
             self.finalizar_edicion()
 
     def agregar_a_lista(self):
+        """
+        [MÓDULO DE INSERCIÓN TEMPORAL]
+        Valida que los campos estén completos, que el código sea numérico y 
+        que el registro no exista ya localmente o en Supabase (la BD). 
+        Si todo está bien, lo enlista visualmente sin mandarlo a la BD aún.
+        """
         cod = self.entry_cod.get().strip()
         prod = self.entry_prod.get().strip()
         
@@ -257,9 +372,35 @@ class App(ctk.CTk):
             print("No se pudo validar duplicados en la nube:", e) # Permite fallo silencioso si se corta el internet
 
         self.crear_fila_historial(cod, prod, self.unit_menu.get(), self.user_menu.get(), datetime.now().strftime("%H:%M"), self.dept_menu.get())
-        self.entry_cod.delete(0, 'end')
         self.entry_prod.delete(0, 'end')
         self.lbl_feedback.configure(text="")
+        # El código NO cambia aquí — solo cambia cuando se guarda en la nube
+
+    def _refrescar_codigo_y_rellenar(self):
+        """
+        Recalcula el siguiente código desde la nube y pre-rellena el campo.
+        Se llama después de agregar un producto a la lista local.
+        El siguiente código es el máximo en nube+1 o bien el mayor entre lista local y nube+1.
+        """
+        maximo_nube = self.obtener_maximo_codigo_nube()
+        # También considera los códigos ya en la lista local (aún no guardados en nube)
+        codigos_locales = []
+        for item in self.lista_productos_widgets:
+            try:
+                codigos_locales.append(int(item['datos'][0]))
+            except ValueError:
+                pass
+        maximo_local = max(codigos_locales) if codigos_locales else 0
+        maximo_base = maximo_nube if maximo_nube is not None else 66057
+        maximo_total = max(maximo_base, maximo_local)
+        self.codigo_siguiente = maximo_total + 1
+        self.lbl_codigo_sig.configure(text=str(self.codigo_siguiente), text_color="#00ff88")
+        ultimo_referencia = maximo_total
+        self.lbl_aviso_sig.configure(
+            text=f"(Último registrado/pendiente: {ultimo_referencia})",
+            text_color="#888888"
+        )
+        self._set_cod(self.codigo_siguiente)
 
     def crear_fila_historial(self, cod, prod, uni, resp, fecha, dept):
         row = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
@@ -282,7 +423,12 @@ class App(ctk.CTk):
         self.lista_productos_widgets.append(item_data)
 
     def filtrar_busqueda(self, event):
-        """Filtrado combinado: Local en tiempo real + Búsqueda en Nube programada"""
+        """
+        [MÓDULO DE BÚSQUEDA]
+        Filtrado combinado: 
+        1. Oculta/Muestra en tiempo real los registros guardados en la lista local temporal.
+        2. Inicia un temporizador para buscar indirectamente en Supabase si encuentra algo.
+        """
         termino = self.entry_search.get().lower().strip()
         
         # 1. Filtrado de la lista local en tiempo real
@@ -308,6 +454,11 @@ class App(ctk.CTk):
         self.resultados_nube_widgets = []
 
     def buscar_en_nube(self, termino):
+        """
+        [MÓDULO DE CONSULTA A BASE DE DATOS]
+        Se conecta a Supabase y trae hasta 15 resultados que coincidan en el nombre o código.
+        Los pinta en la tabla visual para que puedas verlos (o editarlos/borrarlos).
+        """
         self.limpiar_resultados_nube()
         
         # Códigos locales para no mostrar duplicados
@@ -368,7 +519,7 @@ class App(ctk.CTk):
     def iniciar_edicion(self, item_data):
         self.fila_en_edicion = item_data
         d = item_data["datos"]
-        self.entry_cod.delete(0, 'end'); self.entry_cod.insert(0, d[0])
+        self._set_cod(d[0])
         self.entry_prod.delete(0, 'end'); self.entry_prod.insert(0, d[1])
         self.unit_menu.set(d[2]); self.user_menu.set(d[3]); self.dept_menu.set(d[5])
         self.btn_accion_principal.configure(text="ACTUALIZAR FILA", fg_color="#fd7e14")
@@ -400,7 +551,8 @@ class App(ctk.CTk):
             self.fila_en_edicion["frame"].configure(fg_color="transparent")
             self.fila_en_edicion = None
             self.btn_accion_principal.configure(text="AÑADIR A LISTA", fg_color="#28a745")
-            self.entry_cod.delete(0, 'end'); self.entry_prod.delete(0, 'end')
+            # El código NO se recalcula aquí — se mantiene hasta GUARDAR EN NUBE
+            self.entry_prod.delete(0, 'end')
 
     def iniciar_edicion_nube(self, fila_nube):
         self.codigo_nube_en_edicion = fila_nube[0]
@@ -408,7 +560,7 @@ class App(ctk.CTk):
             self.fila_en_edicion["frame"].configure(fg_color="transparent")
             self.fila_en_edicion = None
             
-        self.entry_cod.delete(0, 'end'); self.entry_cod.insert(0, fila_nube[0])
+        self._set_cod(fila_nube[0])
         self.entry_prod.delete(0, 'end'); self.entry_prod.insert(0, fila_nube[1])
         self.unit_menu.set(fila_nube[2]); self.user_menu.set(fila_nube[3]); self.dept_menu.set(fila_nube[5])
         
@@ -448,7 +600,8 @@ class App(ctk.CTk):
             
             self.codigo_nube_en_edicion = None
             self.btn_accion_principal.configure(text="AÑADIR A LISTA", fg_color="#28a745", hover_color="#218838")
-            self.entry_cod.delete(0, 'end'); self.entry_prod.delete(0, 'end')
+            self._set_cod(self.codigo_siguiente)
+            self.entry_prod.delete(0, 'end')
             
             self.filtrar_busqueda(None) # Refrescar búsqueda visual
             
@@ -483,6 +636,11 @@ class App(ctk.CTk):
     # --- COPIADO Y GUARDADO ---
     
     def guardar_en_nube(self):
+        """
+        [MÓDULO DE SINCRONIZACIÓN]
+        Toma todos los productos que tengan el checkbox ✓ marcado en tu lista de 'HISTORIAL DE ACTIVIDAD',
+        y los intenta insertar uno por uno en la tabla de Supabase. Te advierte de duplicados.
+        """
         elementos_a_guardar = [i['datos'] for i in self.lista_productos_widgets if i['var'].get()]
         if not elementos_a_guardar:
             messagebox.showinfo("Sin selección", "No hay elementos en la lista para guardar.")
@@ -542,6 +700,8 @@ class App(ctk.CTk):
                 messagebox.showwarning("Proceso Completado con Observaciones", mensaje)
             else:
                 messagebox.showinfo("Éxito", mensaje)
+            # ✅ Solo aquí se recalcula y actualiza el código — al confirmar que fue a la nube
+            self.after(200, self._refrescar_codigo_y_rellenar)
         else:
             if duplicados:
                 messagebox.showwarning("Sin cambios", f"Todos los productos seleccionados ya están dados de alta o tienen un nombre repetido:\n{', '.join(duplicados)}")
@@ -584,6 +744,11 @@ class App(ctk.CTk):
         messagebox.showinfo("Éxito", "Reporte TXT guardado exitosamente con fecha y responsables.")
 
     def exportar_excel(self):
+        """
+        [MÓDULO DE EXPORTACIÓN PANDAS]
+        Toma todos los elementos con 'palomita' de la lista, les asigna las columnas (Hora, Responsable, etc.)
+        y las convierte en un archivo de Microsoft Excel usando la librería openpyxl/pandas.
+        """
         elementos_a_guardar = [i for i in self.lista_productos_widgets if i['var'].get()]
         if not elementos_a_guardar:
             messagebox.showinfo("Sin selección", "No hay elementos en la lista para exportar.")
