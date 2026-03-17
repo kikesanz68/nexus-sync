@@ -32,16 +32,25 @@ class App(ctk.CTk):
         self.codigo_siguiente = None  # Código que se va a dar de alta automáticamente
 
         # --- CONFIGURACIÓN DE BASE DE DATOS SUPABASE ---
-        # Cargamos la conexión de manera segura usando variables de entorno que no se suben a Git
+        # Aseguramos que cargamos el .env incluso si está al lado del ejecutable
+        import sys
+        if getattr(sys, 'frozen', False):
+            # Si es un EXE, buscamos el .env en la misma carpeta que el EXE
+            application_path = os.path.dirname(sys.executable)
+            load_dotenv(os.path.join(application_path, '.env'))
+        else:
+            load_dotenv()
+
         self.db_uri = os.getenv("SUPABASE_DB_URI")
         
         if not self.db_uri:
-            messagebox.showerror("Error Crítico", "No se encontró el archivo .env o la variable SUPABASE_DB_URI.")
-            self.destroy() # Cerramos si no hay conexión segura
+            # No podemos destruir aquí inmediatamente porque el mainloop no ha empezado
+            # y CustomTkinter puede colapsar. Usamos un flag o lo programamos para después.
+            self.after(100, lambda: self._show_error_and_exit("No se encontró el archivo .env o la variable SUPABASE_DB_URI."))
             return
             
         try:
-            self.conn = psycopg2.connect(self.db_uri)
+            self.conn = psycopg2.connect(self.db_uri, connect_timeout=5)
             self.cursor = self.conn.cursor()
             
             # Crear la tabla si no existe
@@ -57,7 +66,7 @@ class App(ctk.CTk):
             ''')
             self.conn.commit()
         except Exception as e:
-            messagebox.showerror("Error de Conexión", f"No se pudo conectar a la nube: {e}")
+            self.after(100, lambda ex=e: messagebox.showerror("Error de Conexión", f"No se pudo conectar a la nube: {ex}"))
 
         # --- COLUMNA IZQUIERDA (FORMULARIO) ---
         self.frame_izquierdo = ctk.CTkFrame(self, corner_radius=0)
