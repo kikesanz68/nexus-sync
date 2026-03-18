@@ -8,11 +8,25 @@ import psycopg2
 import pandas as pd
 from dotenv import load_dotenv
 
-# Cargamos las variables secretas (contraseñas/tokens)
-load_dotenv()
+# --- CONFIGURACIÓN GLOBAL ---
+CONFIG = {
+    "colors": {
+        "primary": "#10b981",    # Verde esmeralda
+        "secondary": "#3b82f6",  # Azul brillante
+        "danger": "#ef4444",     # Rojo vibrante
+        "bg_input": "#334155",
+        "btn_input": "#1e293b"
+    },
+    "options": {
+        "responsables": ["ENRIQUE", "MISSAEL", "GERMAN"],
+        "departamentos": ["MANTENIMIENTO", "RECURSOS HUMANOS", "COMPRAS", "SISTEMAS"],
+        "unidades": ["PIEZA", "BOLSA", "KILOGRAMO", "METRO", "LITRO", "GALON", "TONELADA", "PAQUETE"]
+    }
+}
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
 
 class App(ctk.CTk):
     """
@@ -25,53 +39,33 @@ class App(ctk.CTk):
         self.title("NexusSync 3.0 - Control Maestro de Altas")
         self.after(0, lambda: self.state('zoomed'))
         
-        # Colores de marca
-        self.color_primary = "#10b981"  # Verde esmeralda
-        self.color_secondary = "#3b82f6" # Azul brillante
-        self.color_danger = "#ef4444"    # Rojo vibrante
+        # Estado de la Aplicación
         self.lista_productos_widgets = []
         self.fila_en_edicion = None
         self.codigo_nube_en_edicion = None
-        self.codigo_siguiente = None  # Código que se va a dar de alta automáticamente
-
-        # --- CONFIGURACIÓN DE BASE DE DATOS SUPABASE ---
-        # Aseguramos que cargamos el .env incluso si está al lado del ejecutable
-        import sys
-        if getattr(sys, 'frozen', False):
-            # Si es un EXE, buscamos el .env en la misma carpeta que el EXE
-            application_path = os.path.dirname(sys.executable)
-            load_dotenv(os.path.join(application_path, '.env'))
-        else:
-            load_dotenv()
-
-        self.db_uri = os.getenv("SUPABASE_DB_URI")
+        self.codigo_siguiente = None
         
+        # Cargar variables de entorno
+        self._cargar_env()
+              # Inicializar Base de Datos
         if not self.db_uri:
-            # No podemos destruir aquí inmediatamente porque el mainloop no ha empezado
-            # y CustomTkinter puede colapsar. Usamos un flag o lo programamos para después.
-            self.after(100, lambda: self._show_error_and_exit("No se encontró el archivo .env o la variable SUPABASE_DB_URI."))
+            self.after(100, lambda: self._show_error_and_exit("No se encontró la variable SUPABASE_DB_URI en el archivo .env"))
             return
             
-        try:
-            self.conn = psycopg2.connect(self.db_uri, connect_timeout=5)
-            self.cursor = self.conn.cursor()
-            
-            # Crear la tabla si no existe
-            self.cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historial (
-                    codigo TEXT PRIMARY KEY,
-                    producto TEXT,
-                    unidad TEXT,
-                    responsable TEXT,
-                    fecha TEXT,
-                    departamento TEXT
-                )
-            ''')
-            self.conn.commit()
-        except Exception as e:
-            self.after(100, lambda ex=e: messagebox.showerror("Error de Conexión", f"No se pudo conectar a la nube: {ex}"))
+        self._inicializar_db()
 
-        # --- COLUMNA IZQUIERDA (FORMULARIO Y DASHBOARD) ---
+        # --- CONSTRUCCIÓN DE LA INTERFAZ ---
+        self._setup_ui_sidebar()
+        self._setup_ui_history()
+
+        # Evento de cierre
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # Calcular y mostrar el código siguiente al iniciar
+        self.after(300, self.actualizar_codigo_siguiente)
+
+    def _setup_ui_sidebar(self):
+        """Configura la columna izquierda: Formulario y Dashboard de control."""
         self.frame_izquierdo = ctk.CTkFrame(self, corner_radius=0, width=400)
         self.frame_izquierdo.pack(side="left", fill="y")
         self.frame_izquierdo.pack_propagate(False)
@@ -84,25 +78,25 @@ class App(ctk.CTk):
         self.theme_switch.select()
         self.theme_switch.pack(side="right")
 
-        self.label_titulo = ctk.CTkLabel(self.frame_izquierdo, text="NEXUSSYNC 3.0", font=("Inter", 28, "bold"), text_color=self.color_primary)
+        self.label_titulo = ctk.CTkLabel(self.frame_izquierdo, text="NEXUSSYNC 3.0", font=("Inter", 28, "bold"), text_color=CONFIG["colors"]["primary"])
         self.label_titulo.pack(pady=(10, 20))
 
-        # Contenedor del Formulario para centrarlo un poco
+        # Contenedor del Formulario
         self.form_container = ctk.CTkFrame(self.frame_izquierdo, fg_color="transparent")
         self.form_container.pack(pady=10, padx=40, fill="x")
 
-        # Inputs con etiquetas
+        # Inputs con etiquetas usando CONFIG
         self.crear_label(self.form_container, "Responsable:")
-        self.user_menu = ctk.CTkOptionMenu(self.form_container, values=["ENRIQUE", "MISSAEL", "GERMAN"], width=300, fg_color="#334155", button_color="#1e293b")
+        self.user_menu = ctk.CTkOptionMenu(self.form_container, values=CONFIG["options"]["responsables"], width=300, fg_color=CONFIG["colors"]["bg_input"], button_color=CONFIG["colors"]["btn_input"])
         self.user_menu.pack(pady=5)
 
         self.crear_label(self.form_container, "Departamento:")
-        self.dept_menu = ctk.CTkOptionMenu(self.form_container, values=["MANTENIMIENTO", "RECURSOS HUMANOS", "COMPRAS", "SISTEMAS"], width=300, fg_color="#334155", button_color="#1e293b")
+        self.dept_menu = ctk.CTkOptionMenu(self.form_container, values=CONFIG["options"]["departamentos"], width=300, fg_color=CONFIG["colors"]["bg_input"], button_color=CONFIG["colors"]["btn_input"])
         self.dept_menu.set("MANTENIMIENTO")
         self.dept_menu.pack(pady=5)
 
         self.crear_label(self.form_container, "Unidad:")
-        self.unit_menu = ctk.CTkOptionMenu(self.form_container, values=["PIEZA", "BOLSA", "KILOGRAMO", "METRO", "LITRO", "GALON", "TONELADA", "PAQUETE"], width=300, fg_color="#334155", button_color="#1e293b")
+        self.unit_menu = ctk.CTkOptionMenu(self.form_container, values=CONFIG["options"]["unidades"], width=300, fg_color=CONFIG["colors"]["bg_input"], button_color=CONFIG["colors"]["btn_input"])
         self.unit_menu.pack(pady=5)
 
         self.crear_label(self.form_container, "Código:")
@@ -111,9 +105,9 @@ class App(ctk.CTk):
             placeholder_text="Auto-generado",
             width=300,
             state="disabled",
-            text_color=self.color_primary,
+            text_color=CONFIG["colors"]["primary"],
             fg_color=("white", "#1e293b"),
-            border_color=self.color_primary
+            border_color=CONFIG["colors"]["primary"]
         )
         self.entry_cod.pack(pady=5)
 
@@ -122,29 +116,26 @@ class App(ctk.CTk):
         self.entry_prod.pack(pady=5)
         
         # Menú contextual de Copiar/Pegar para el campo Descripción
-        self.menu_contextual_prod = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white",
-                                            activebackground="#28a745", activeforeground="white")
+        self.menu_contextual_prod = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#28a745", activeforeground="white")
         self.menu_contextual_prod.add_command(label="📋  Copiar", command=self.copiar_descripcion)
         self.menu_contextual_prod.add_command(label="📎  Pegar",  command=self.pegar_descripcion)
-        self.entry_prod.bind("<Button-3>", self.mostrar_menu_contextual_prod)  # Click derecho
-        
-        # Label de feedback (oculto — ya no se valida descripción en vivo)
+        self.entry_prod.bind("<Button-3>", self.mostrar_menu_contextual_prod)
+
         self.lbl_feedback = ctk.CTkLabel(self.frame_izquierdo, text="", font=("Roboto", 12, "bold"))
         self.lbl_feedback.pack(pady=(0, 5))
-        # Sin bind KeyRelease en entry_prod: el campo es solo de captura, sin buscar en BD
 
-        # Botones de Acción Izquierda
-        self.btn_accion_principal = ctk.CTkButton(self.frame_izquierdo, text="AÑADIR A LISTA", fg_color=self.color_primary, hover_color="#059669", height=45, font=("Inter", 14, "bold"), command=self.procesar_accion_principal)
+        # Botones de Acción
+        self.btn_accion_principal = ctk.CTkButton(self.frame_izquierdo, text="AÑADIR A LISTA", fg_color=CONFIG["colors"]["primary"], hover_color="#059669", height=45, font=("Inter", 14, "bold"), command=self.procesar_accion_principal)
         self.btn_accion_principal.pack(pady=(20, 10), padx=40, fill="x")
 
-        self.btn_nube = ctk.CTkButton(self.frame_izquierdo, text="GUARDAR EN NUBE ☁️", fg_color=self.color_secondary, hover_color="#2563eb", height=45, font=("Inter", 14, "bold"), command=self.guardar_en_nube)
+        self.btn_nube = ctk.CTkButton(self.frame_izquierdo, text="GUARDAR EN NUBE ☁️", fg_color=CONFIG["colors"]["secondary"], hover_color="#2563eb", height=45, font=("Inter", 14, "bold"), command=self.guardar_en_nube)
         self.btn_nube.pack(pady=(0, 10), padx=40, fill="x")
 
         # Reportes y Limpieza
         self.frame_extra = ctk.CTkFrame(self.frame_izquierdo, fg_color="transparent")
         self.frame_extra.pack(pady=10, padx=40, fill="x")
         
-        self.btn_save = ctk.CTkButton(self.frame_extra, text="TXT 📄", fg_color=self.color_danger, hover_color="#dc2626", width=80, command=self.guardar_archivo)
+        self.btn_save = ctk.CTkButton(self.frame_extra, text="TXT 📄", fg_color=CONFIG["colors"]["danger"], hover_color="#dc2626", width=80, command=self.guardar_archivo)
         self.btn_save.pack(side="left", padx=5)
 
         self.btn_excel = ctk.CTkButton(self.frame_extra, text="Excel 📊", fg_color="#10b981", hover_color="#059669", width=80, command=self.exportar_excel)
@@ -153,22 +144,18 @@ class App(ctk.CTk):
         self.btn_reset = ctk.CTkButton(self.frame_extra, text="Limpiar 🧹", fg_color="#6b7280", hover_color="#4b5563", width=80, command=self.limpiar_historial_completo)
         self.btn_reset.pack(side="left", padx=5)
 
-        # --- PANEL DE CÓDIGO SIGUIENTE (AHORA AL FONDO) ---
-        self.frame_codigo_sig = ctk.CTkFrame(self.frame_izquierdo, fg_color=("#f1f5f9", "#1e293b"), border_width=1, border_color=self.color_primary, corner_radius=15)
+        # Panel de Código Siguiente
+        self.frame_codigo_sig = ctk.CTkFrame(self.frame_izquierdo, fg_color=("#f1f5f9", "#1e293b"), border_width=1, border_color=CONFIG["colors"]["primary"], corner_radius=15)
         self.frame_codigo_sig.pack(side="bottom", pady=30, padx=30, fill="x")
 
-        ctk.CTkLabel(self.frame_codigo_sig, text="PRÓXIMO CÓDIGO",
-                     font=("Inter", 11, "bold"), text_color=self.color_primary).pack(pady=(12, 0))
-
-        self.lbl_codigo_sig = ctk.CTkLabel(self.frame_codigo_sig, text="---",
-                                           font=("Inter", 38, "bold"), text_color=self.color_primary)
+        ctk.CTkLabel(self.frame_codigo_sig, text="PRÓXIMO CÓDIGO", font=("Inter", 11, "bold"), text_color=CONFIG["colors"]["primary"]).pack(pady=(12, 0))
+        self.lbl_codigo_sig = ctk.CTkLabel(self.frame_codigo_sig, text="---", font=("Inter", 38, "bold"), text_color=CONFIG["colors"]["primary"])
         self.lbl_codigo_sig.pack(pady=(2, 2))
-
-        self.lbl_aviso_sig = ctk.CTkLabel(self.frame_codigo_sig, text="",
-                                          font=("Inter", 10), text_color="#64748b")
+        self.lbl_aviso_sig = ctk.CTkLabel(self.frame_codigo_sig, text="", font=("Inter", 10), text_color="#64748b")
         self.lbl_aviso_sig.pack(pady=(0, 12))
 
-        # --- COLUMNA DERECHA (HISTORIAL) ---
+    def _setup_ui_history(self):
+        """Configura la columna derecha: Historial y Herramientas de búsqueda."""
         self.frame_derecho = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.frame_derecho.pack(side="right", fill="both", expand=True)
 
@@ -183,30 +170,25 @@ class App(ctk.CTk):
         self.btn_buscar = ctk.CTkButton(self.search_container, text="🔍 Buscar", width=100, height=45, fg_color="#64748b", hover_color="#475569", font=("Inter", 12, "bold"), corner_radius=10, command=lambda: self.filtrar_busqueda(None))
         self.btn_buscar.pack(side="right")
 
-        # Menú contextual de Copiar y Pegar para el buscador
+        # Menú contextual Buscador
         self.menu_contextual = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#0066cc", activeforeground="white")
         self.menu_contextual.add_command(label="Copiar", command=self.copiar_buscador)
         self.menu_contextual.add_command(label="Pegar", command=self.pegar_buscador)
-        self.entry_search.bind("<Button-3>", self.mostrar_menu_contextual) # Click derecho
+        self.entry_search.bind("<Button-3>", self.mostrar_menu_contextual)
 
         self.scroll_frame = ctk.CTkScrollableFrame(self.frame_derecho, label_text="HISTORIAL DE ACTIVIDAD")
         self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-        # Panel de botones de copiado (Herramientas Rápidas)
+        # Panel de botones de copiado
         self.button_grid = ctk.CTkFrame(self.frame_derecho, fg_color="transparent")
         self.button_grid.pack(pady=20, padx=30, fill="x")
 
-        ctk.CTkButton(self.button_grid, text="COPIAR PARA ENVÍO 📋", fg_color=self.color_secondary, hover_color="#2563eb", height=40, font=("Inter", 12, "bold"), command=self.copiar_seleccionados).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(self.button_grid, text="COPIAR PARA ENVÍO 📋", fg_color=CONFIG["colors"]["secondary"], hover_color="#2563eb", height=40, font=("Inter", 12, "bold"), command=self.copiar_seleccionados).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
         ctk.CTkButton(self.button_grid, text="SOLO CÓDIGOS 🔢", fg_color="#f59e0b", hover_color="#d97706", height=40, font=("Inter", 12, "bold"), command=lambda: self.copiar_especifico(0)).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         ctk.CTkButton(self.button_grid, text="SOLO PRODUCTOS 📦", fg_color="#06b6d4", hover_color="#0891b2", height=40, font=("Inter", 12, "bold"), command=lambda: self.copiar_especifico(1)).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
         ctk.CTkButton(self.button_grid, text="SOLO UNIDADES 📏", fg_color="#8b5cf6", hover_color="#7c3aed", height=40, font=("Inter", 12, "bold"), command=lambda: self.copiar_especifico(2)).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
         
         self.button_grid.grid_columnconfigure((0, 1), weight=1)
-
-        # Evento de cierre
-        self.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # Calcular y mostrar el código siguiente al iniciar
         self.after(300, self.actualizar_codigo_siguiente)
 
     def cambiar_tema(self):
@@ -215,7 +197,41 @@ class App(ctk.CTk):
         else:
             ctk.set_appearance_mode("light")
 
+    def _cargar_env(self):
+        """Carga las variables de entorno manejando el caso de ejecutable congelado."""
+        import sys
+        if getattr(sys, 'frozen', False):
+            application_path = os.path.dirname(sys.executable)
+            load_dotenv(os.path.join(application_path, '.env'))
+        else:
+            load_dotenv()
+        self.db_uri = os.getenv("SUPABASE_DB_URI")
+
+    def _inicializar_db(self):
+        """Prepara la conexión inicial y crea la tabla si no existe."""
+        try:
+            self.conn = psycopg2.connect(self.db_uri, connect_timeout=5)
+            self.cursor = self.conn.cursor()
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historial (
+                    codigo TEXT PRIMARY KEY,
+                    producto TEXT,
+                    unidad TEXT,
+                    responsable TEXT,
+                    fecha TEXT,
+                    departamento TEXT
+                )
+            ''')
+            self.conn.commit()
+        except Exception as e:
+            self.after(100, lambda ex=e: messagebox.showerror("Error de Conexión", f"No se pudo conectar a la nube: {ex}"))
+
+    def _show_error_and_exit(self, mensaje):
+        messagebox.showerror("Error Crítico", mensaje)
+        self.destroy()
+
     def on_closing(self):
+
         if hasattr(self, 'conn'):
             self.conn.close()
         self.destroy()
