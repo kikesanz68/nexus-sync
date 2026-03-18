@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.exe
+*.spec
+dist/
+build/
+.vscode/
+.idea/
+*.xlsx
+*.txt
+*.pdf
