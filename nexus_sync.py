@@ -25,7 +25,10 @@ class App(ctk.CTk):
         self.title("NexusSync 3.0 - Control Maestro de Altas")
         self.after(0, lambda: self.state('zoomed'))
         
-        # Variables de control
+        # Colores de marca
+        self.color_primary = "#10b981"  # Verde esmeralda
+        self.color_secondary = "#3b82f6" # Azul brillante
+        self.color_danger = "#ef4444"    # Rojo vibrante
         self.lista_productos_widgets = []
         self.fila_en_edicion = None
         self.codigo_nube_en_edicion = None
@@ -68,41 +71,54 @@ class App(ctk.CTk):
         except Exception as e:
             self.after(100, lambda ex=e: messagebox.showerror("Error de Conexión", f"No se pudo conectar a la nube: {ex}"))
 
-        # --- COLUMNA IZQUIERDA (FORMULARIO) ---
-        self.frame_izquierdo = ctk.CTkFrame(self, corner_radius=0)
-        self.frame_izquierdo.place(relx=0, rely=0, relwidth=0.4, relheight=1)
+        # --- COLUMNA IZQUIERDA (FORMULARIO Y DASHBOARD) ---
+        self.frame_izquierdo = ctk.CTkFrame(self, corner_radius=0, width=400)
+        self.frame_izquierdo.pack(side="left", fill="y")
+        self.frame_izquierdo.pack_propagate(False)
 
-        self.label_titulo = ctk.CTkLabel(self.frame_izquierdo, text="REGISTRO DE PRODUCTO", font=("Roboto", 28, "bold"))
-        self.label_titulo.pack(pady=(40, 20))
+        # Header con Switch de Tema
+        self.header_left = ctk.CTkFrame(self.frame_izquierdo, fg_color="transparent")
+        self.header_left.pack(pady=(20, 10), padx=20, fill="x")
+        
+        self.theme_switch = ctk.CTkSwitch(self.header_left, text="Modo Oscuro", command=self.cambiar_tema)
+        self.theme_switch.select()
+        self.theme_switch.pack(side="right")
+
+        self.label_titulo = ctk.CTkLabel(self.frame_izquierdo, text="NEXUSSYNC 3.0", font=("Inter", 28, "bold"), text_color=self.color_primary)
+        self.label_titulo.pack(pady=(10, 20))
+
+        # Contenedor del Formulario para centrarlo un poco
+        self.form_container = ctk.CTkFrame(self.frame_izquierdo, fg_color="transparent")
+        self.form_container.pack(pady=10, padx=40, fill="x")
 
         # Inputs con etiquetas
-        self.crear_label(self.frame_izquierdo, "Responsable:")
-        self.user_menu = ctk.CTkOptionMenu(self.frame_izquierdo, values=["ENRIQUE", "MISSAEL", "GERMAN"], width=300)
+        self.crear_label(self.form_container, "Responsable:")
+        self.user_menu = ctk.CTkOptionMenu(self.form_container, values=["ENRIQUE", "MISSAEL", "GERMAN"], width=300, fg_color="#334155", button_color="#1e293b")
         self.user_menu.pack(pady=5)
 
-        self.crear_label(self.frame_izquierdo, "Departamento:")
-        self.dept_menu = ctk.CTkOptionMenu(self.frame_izquierdo, values=["MANTENIMIENTO", "RECURSOS HUMANOS", "COMPRAS", "SISTEMAS"], width=300)
+        self.crear_label(self.form_container, "Departamento:")
+        self.dept_menu = ctk.CTkOptionMenu(self.form_container, values=["MANTENIMIENTO", "RECURSOS HUMANOS", "COMPRAS", "SISTEMAS"], width=300, fg_color="#334155", button_color="#1e293b")
         self.dept_menu.set("MANTENIMIENTO")
         self.dept_menu.pack(pady=5)
 
-        self.crear_label(self.frame_izquierdo, "Unidad:")
-        self.unit_menu = ctk.CTkOptionMenu(self.frame_izquierdo, values=["PIEZA", "BOLSA", "KILOGRAMO", "METRO", "LITRO", "GALON", "TONELADA", "PAQUETE"], width=300)
+        self.crear_label(self.form_container, "Unidad:")
+        self.unit_menu = ctk.CTkOptionMenu(self.form_container, values=["PIEZA", "BOLSA", "KILOGRAMO", "METRO", "LITRO", "GALON", "TONELADA", "PAQUETE"], width=300, fg_color="#334155", button_color="#1e293b")
         self.unit_menu.pack(pady=5)
 
-        self.crear_label(self.frame_izquierdo, "Código:")
+        self.crear_label(self.form_container, "Código:")
         self.entry_cod = ctk.CTkEntry(
-            self.frame_izquierdo,
+            self.form_container,
             placeholder_text="Auto-generado",
             width=300,
-            state="disabled",          # Bloqueado: el sistema lo rellena
-            text_color="#00ff88",
-            fg_color="#1a2b1a",
-            border_color="#28a745"
+            state="disabled",
+            text_color=self.color_primary,
+            fg_color=("white", "#1e293b"),
+            border_color=self.color_primary
         )
         self.entry_cod.pack(pady=5)
 
-        self.crear_label(self.frame_izquierdo, "Descripción:")
-        self.entry_prod = ctk.CTkEntry(self.frame_izquierdo, placeholder_text="Nombre del producto...", width=300)
+        self.crear_label(self.form_container, "Descripción:")
+        self.entry_prod = ctk.CTkEntry(self.form_container, placeholder_text="Nombre del producto...", width=300)
         self.entry_prod.pack(pady=5)
         
         # Menú contextual de Copiar/Pegar para el campo Descripción
@@ -118,54 +134,54 @@ class App(ctk.CTk):
         # Sin bind KeyRelease en entry_prod: el campo es solo de captura, sin buscar en BD
 
         # Botones de Acción Izquierda
-        self.btn_accion_principal = ctk.CTkButton(self.frame_izquierdo, text="AÑADIR A LISTA", fg_color="#28a745", hover_color="#218838", height=45, font=("Roboto", 14, "bold"), command=self.procesar_accion_principal)
-        self.btn_accion_principal.pack(pady=(20, 8))
+        self.btn_accion_principal = ctk.CTkButton(self.frame_izquierdo, text="AÑADIR A LISTA", fg_color=self.color_primary, hover_color="#059669", height=45, font=("Inter", 14, "bold"), command=self.procesar_accion_principal)
+        self.btn_accion_principal.pack(pady=(20, 10), padx=40, fill="x")
 
-        # --- PANEL DE CÓDIGO SIGUIENTE ---
-        self.frame_codigo_sig = ctk.CTkFrame(self.frame_izquierdo, fg_color="#1a2b1a", border_width=2, border_color="#28a745", corner_radius=12)
-        self.frame_codigo_sig.pack(pady=(0, 10), padx=30, fill="x")
+        self.btn_nube = ctk.CTkButton(self.frame_izquierdo, text="GUARDAR EN NUBE ☁️", fg_color=self.color_secondary, hover_color="#2563eb", height=45, font=("Inter", 14, "bold"), command=self.guardar_en_nube)
+        self.btn_nube.pack(pady=(0, 10), padx=40, fill="x")
 
-        ctk.CTkLabel(self.frame_codigo_sig, text="📋 CÓDIGO SIGUIENTE A DAR DE ALTA",
-                     font=("Roboto", 10, "bold"), text_color="#7dcf7d").pack(pady=(8, 0))
+        # Reportes y Limpieza
+        self.frame_extra = ctk.CTkFrame(self.frame_izquierdo, fg_color="transparent")
+        self.frame_extra.pack(pady=10, padx=40, fill="x")
+        
+        self.btn_save = ctk.CTkButton(self.frame_extra, text="TXT 📄", fg_color=self.color_danger, hover_color="#dc2626", width=80, command=self.guardar_archivo)
+        self.btn_save.pack(side="left", padx=5)
 
-        self.lbl_codigo_sig = ctk.CTkLabel(self.frame_codigo_sig, text="Cargando...",
-                                           font=("Roboto", 32, "bold"), text_color="#00ff88")
-        self.lbl_codigo_sig.pack(pady=(2, 4))
+        self.btn_excel = ctk.CTkButton(self.frame_extra, text="Excel 📊", fg_color="#10b981", hover_color="#059669", width=80, command=self.exportar_excel)
+        self.btn_excel.pack(side="left", padx=5)
+
+        self.btn_reset = ctk.CTkButton(self.frame_extra, text="Limpiar 🧹", fg_color="#6b7280", hover_color="#4b5563", width=80, command=self.limpiar_historial_completo)
+        self.btn_reset.pack(side="left", padx=5)
+
+        # --- PANEL DE CÓDIGO SIGUIENTE (AHORA AL FONDO) ---
+        self.frame_codigo_sig = ctk.CTkFrame(self.frame_izquierdo, fg_color=("#f1f5f9", "#1e293b"), border_width=1, border_color=self.color_primary, corner_radius=15)
+        self.frame_codigo_sig.pack(side="bottom", pady=30, padx=30, fill="x")
+
+        ctk.CTkLabel(self.frame_codigo_sig, text="PRÓXIMO CÓDIGO",
+                     font=("Inter", 11, "bold"), text_color=self.color_primary).pack(pady=(12, 0))
+
+        self.lbl_codigo_sig = ctk.CTkLabel(self.frame_codigo_sig, text="---",
+                                           font=("Inter", 38, "bold"), text_color=self.color_primary)
+        self.lbl_codigo_sig.pack(pady=(2, 2))
 
         self.lbl_aviso_sig = ctk.CTkLabel(self.frame_codigo_sig, text="",
-                                          font=("Roboto", 10), text_color="#aaaaaa")
-        self.lbl_aviso_sig.pack(pady=(0, 8))
+                                          font=("Inter", 10), text_color="#64748b")
+        self.lbl_aviso_sig.pack(pady=(0, 12))
 
-        self.btn_nube = ctk.CTkButton(self.frame_izquierdo, text="GUARDAR EN NUBE ☁️", fg_color="#0066cc", hover_color="#0052a3", height=45, font=("Roboto", 14, "bold"), command=self.guardar_en_nube)
-        self.btn_nube.pack(pady=(0, 20))
-
-        # Contenedor para botones de guardado local
-        self.frame_guardado_local = ctk.CTkFrame(self.frame_izquierdo, fg_color="transparent")
-        self.frame_guardado_local.pack(pady=10)
-
-        self.btn_save = ctk.CTkButton(self.frame_guardado_local, text="REPORTE (.txt) 📄", fg_color="#dc3545", width=140, command=self.guardar_archivo)
-        self.btn_save.grid(row=0, column=0, padx=5)
-
-        self.btn_excel = ctk.CTkButton(self.frame_guardado_local, text="REPORTE (.xlsx) 📊", fg_color="#20c997", width=140, command=self.exportar_excel)
-        self.btn_excel.grid(row=0, column=1, padx=5)
-
-        self.btn_reset = ctk.CTkButton(self.frame_izquierdo, text="LIMPIAR TODO EL HISTORIAL 🧹", fg_color="#6c757d", command=self.limpiar_historial_completo)
-        self.btn_reset.pack(pady=10)
-
-        # --- COLUMNA DERECHA (HISTORIAL Y BUSCADOR) ---
+        # --- COLUMNA DERECHA (HISTORIAL) ---
         self.frame_derecho = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
-        self.frame_derecho.place(relx=0.4, rely=0, relwidth=0.6, relheight=1)
+        self.frame_derecho.pack(side="right", fill="both", expand=True)
 
-        # Buscador en tiempo real
-        self.search_frame = ctk.CTkFrame(self.frame_derecho, fg_color="transparent")
-        self.search_frame.pack(pady=(20, 0), padx=20, fill="x")
+        # Buscador superior
+        self.search_container = ctk.CTkFrame(self.frame_derecho, fg_color="transparent")
+        self.search_container.pack(pady=(30, 10), padx=30, fill="x")
         
-        self.entry_search = ctk.CTkEntry(self.search_frame, placeholder_text="Escriba código o descripción...", height=35)
-        self.entry_search.pack(side="left", fill="x", expand=True, padx=(20, 5))
+        self.entry_search = ctk.CTkEntry(self.search_container, placeholder_text="Buscar por código o producto...", height=45, font=("Inter", 13), corner_radius=10)
+        self.entry_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.entry_search.bind("<KeyRelease>", self.filtrar_busqueda)
 
-        self.btn_buscar = ctk.CTkButton(self.search_frame, text="🔍 Buscar", width=80, height=35, fg_color="#4b5563", hover_color="#374151", command=lambda: self.filtrar_busqueda(None))
-        self.btn_buscar.pack(side="right", padx=(0, 20))
+        self.btn_buscar = ctk.CTkButton(self.search_container, text="🔍 Buscar", width=100, height=45, fg_color="#64748b", hover_color="#475569", font=("Inter", 12, "bold"), corner_radius=10, command=lambda: self.filtrar_busqueda(None))
+        self.btn_buscar.pack(side="right")
 
         # Menú contextual de Copiar y Pegar para el buscador
         self.menu_contextual = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#0066cc", activeforeground="white")
@@ -176,14 +192,14 @@ class App(ctk.CTk):
         self.scroll_frame = ctk.CTkScrollableFrame(self.frame_derecho, label_text="HISTORIAL DE ACTIVIDAD")
         self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-        # Panel de botones de copiado
+        # Panel de botones de copiado (Herramientas Rápidas)
         self.button_grid = ctk.CTkFrame(self.frame_derecho, fg_color="transparent")
-        self.button_grid.pack(pady=20, padx=20, fill="x")
+        self.button_grid.pack(pady=20, padx=30, fill="x")
 
-        ctk.CTkButton(self.button_grid, text="Copiar para Envío 📋", fg_color="#007bff", command=self.copiar_seleccionados).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        ctk.CTkButton(self.button_grid, text="Solo Códigos 🔢", fg_color="#fd7e14", command=lambda: self.copiar_especifico(0)).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        ctk.CTkButton(self.button_grid, text="Solo Productos 📦", fg_color="#17a2b8", command=lambda: self.copiar_especifico(1)).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-        ctk.CTkButton(self.button_grid, text="Solo Unidades 📏", fg_color="#6f42c1", command=lambda: self.copiar_especifico(2)).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(self.button_grid, text="COPIAR PARA ENVÍO 📋", fg_color=self.color_secondary, hover_color="#2563eb", height=40, font=("Inter", 12, "bold"), command=self.copiar_seleccionados).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(self.button_grid, text="SOLO CÓDIGOS 🔢", fg_color="#f59e0b", hover_color="#d97706", height=40, font=("Inter", 12, "bold"), command=lambda: self.copiar_especifico(0)).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(self.button_grid, text="SOLO PRODUCTOS 📦", fg_color="#06b6d4", hover_color="#0891b2", height=40, font=("Inter", 12, "bold"), command=lambda: self.copiar_especifico(1)).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(self.button_grid, text="SOLO UNIDADES 📏", fg_color="#8b5cf6", hover_color="#7c3aed", height=40, font=("Inter", 12, "bold"), command=lambda: self.copiar_especifico(2)).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
         
         self.button_grid.grid_columnconfigure((0, 1), weight=1)
 
@@ -192,6 +208,12 @@ class App(ctk.CTk):
 
         # Calcular y mostrar el código siguiente al iniciar
         self.after(300, self.actualizar_codigo_siguiente)
+
+    def cambiar_tema(self):
+        if self.theme_switch.get() == 1:
+            ctk.set_appearance_mode("dark")
+        else:
+            ctk.set_appearance_mode("light")
 
     def on_closing(self):
         if hasattr(self, 'conn'):
@@ -255,8 +277,8 @@ class App(ctk.CTk):
         # El panel siempre muestra el que viene DESPUÉS del que está en el campo
         try:
             siguiente_display = int(valor) + 1
-            self.lbl_codigo_sig.configure(text=str(siguiente_display), text_color="#00ff88")
-            self.lbl_aviso_sig.configure(text=f"(En campo: {valor})", text_color="#888888")
+            self.lbl_codigo_sig.configure(text=str(siguiente_display))
+            self.lbl_aviso_sig.configure(text=f"(Código actual en campo: {valor})")
         except (ValueError, AttributeError):
             pass
 
