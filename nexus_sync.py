@@ -76,12 +76,116 @@ class VentanaLogin(ctk.CTkToplevel):
         usuario = self.user_menu.get()
         password = self.pass_entry.get()
         
-        if CONFIG["options"]["usuarios"].get(usuario) == password:
+        # Primero intentamos contra la Nube si hay conexión
+        login_exitoso = False
+        try:
+            if hasattr(self.master, 'conn') and self.master.conn:
+                cursor = self.master.conn.cursor()
+                cursor.execute("SELECT password FROM usuarios WHERE usuario = %s", (usuario,))
+                resultado = cursor.fetchone()
+                if resultado and resultado[0] == password:
+                    login_exitoso = True
+                cursor.close()
+        except Exception as e:
+            print("Error verificando en nube, usando respaldo local:", e)
+            
+        # Si no hubo éxito o falló la conexión, usamos el CONFIG local como respaldo
+        if not login_exitoso:
+            if CONFIG["options"]["usuarios"].get(usuario) == password:
+                login_exitoso = True
+                
+        if login_exitoso:
             self.callback_exito(usuario)
             self.destroy()
         else:
             messagebox.showerror("Acceso Denegado", "Contraseña incorrecta. Inténtalo de nuevo.")
             self.pass_entry.delete(0, 'end')
+
+class VentanaCambiarPassword(ctk.CTkToplevel):
+    """Ventana para que el usuario logueado cambie su contraseña."""
+    def __init__(self, master, usuario_actual):
+        super().__init__(master)
+        self.title("Cambiar Contraseña")
+        self.geometry("400x480")
+        self.resizable(False, False)
+        self.usuario_actual = usuario_actual
+        self.master = master
+        
+        # Centrar ventana y hacerla modal
+        self.after(10, self._centrar)
+        self.grab_set()
+        
+        ctk.CTkLabel(self, text="🔑 ACTUALIZAR ACCESO", font=("Inter", 22, "bold"), text_color=CONFIG["colors"]["primary"]).pack(pady=(30, 10))
+        ctk.CTkLabel(self, text=f"Estás cambiando la clave de: {usuario_actual}", font=("Inter", 12), text_color="#64748b").pack(pady=(0, 30))
+        
+        # Campos
+        self.pass_actual = ctk.CTkEntry(self, placeholder_text="Contraseña Actual", show="*", width=280, height=45)
+        self.pass_actual.pack(pady=10)
+        
+        self.pass_nueva = ctk.CTkEntry(self, placeholder_text="Nueva Contraseña", show="*", width=280, height=45)
+        self.pass_nueva.pack(pady=10)
+        
+        self.pass_confirmar = ctk.CTkEntry(self, placeholder_text="Confirmar Nueva Contraseña", show="*", width=280, height=45)
+        self.pass_confirmar.pack(pady=10)
+        
+        self.btn_guardar = ctk.CTkButton(self, text="GUARDAR CAMBIO", font=("Inter", 14, "bold"), 
+                                         fg_color=CONFIG["colors"]["primary"], height=45, width=280,
+                                         command=self.ejecutar_cambio)
+        self.btn_guardar.pack(pady=(30, 10))
+
+    def _centrar(self):
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f'{width}x{height}+{x}+{y}')
+
+    def ejecutar_cambio(self):
+        actual = self.pass_actual.get()
+        nueva = self.pass_nueva.get()
+        confirmar = self.pass_confirmar.get()
+        
+        if not actual or not nueva or not confirmar:
+            messagebox.showwarning("Incompleto", "Por favor llena todos los campos.")
+            return
+            
+        if nueva != confirmar:
+            messagebox.showerror("Error", "Las contraseñas nuevas no coinciden.")
+            return
+            
+        if len(nueva) < 3:
+            messagebox.showerror("Error", "La nueva contraseña debe tener al menos 3 caracteres.")
+            return
+
+        # Verificar contraseña actual
+        verificado = False
+        try:
+            if hasattr(self.master, 'conn') and self.master.conn:
+                cursor = self.master.conn.cursor()
+                cursor.execute("SELECT password FROM usuarios WHERE usuario = %s", (self.usuario_actual,))
+                res = cursor.fetchone()
+                if res and res[0] == actual:
+                    # Proceder al cambio en Nube
+                    cursor.execute("UPDATE usuarios SET password = %s WHERE usuario = %s", (nueva, self.usuario_actual))
+                    self.master.conn.commit()
+                    verificado = True
+                cursor.close()
+            else:
+                # Fallback local (no recomendado pero útil para debug/offline)
+                if CONFIG["options"]["usuarios"].get(self.usuario_actual) == actual:
+                    CONFIG["options"]["usuarios"][self.usuario_actual] = nueva
+                    verificado = True
+        except Exception as e:
+            messagebox.showerror("Error Nube", f"No se pudo completar el cambio en la base de datos:\n{e}")
+            return
+
+        if verificado:
+            messagebox.showinfo("Éxito", "Contraseña actualizada exitosamente.\nPor favor, usa tu nueva clave la próxima vez que ingreses.")
+            self.destroy()
+        else:
+            messagebox.showerror("Error", "La contraseña actual es incorrecta.")
+
 
 class App(ctk.CTk):
     """
@@ -161,8 +265,25 @@ class App(ctk.CTk):
                                 command=self._mostrar_alta_clientes)
         btn_cli.pack(side="left", padx=20)
 
+        ctk.CTkButton(menu_frame, text="Cambiar Contraseña 🔐", fg_color="transparent", text_color=CONFIG["colors"]["secondary"], 
+                       hover_color="#1e293b", command=self.abrir_ventana_cambio_password).pack(pady=(20, 0))
+
         ctk.CTkButton(menu_frame, text="Cerrar Sesión", fg_color="transparent", text_color="#ef4444", 
-                       hover_color="#1e293b", command=self.cerrar_sesion).pack(pady=(50, 0))
+                       hover_color="#1e293b", command=self.cerrar_sesion).pack(pady=(10, 0))
+        
+        # Botón de Salida Definitiva
+        ctk.CTkButton(menu_frame, text="SALIR DEL SISTEMA ⛔", fg_color=CONFIG["colors"]["danger"], 
+                       hover_color="#991b1b", font=("Inter", 12, "bold"), height=40,
+                       command=self.salir_definitivo).pack(pady=(30, 0))
+
+    def salir_definitivo(self):
+        """Lógica para cerrar todo el programa tras confirmación."""
+        if messagebox.askyesno("Confirmar Salida", "¿Estás seguro que deseas salir completamente del sistema?"):
+            self.on_closing() # Llama al limpiador de conexiones y destruye la ventana principal
+
+    def abrir_ventana_cambio_password(self):
+        """Abre el diálogo para cambiar contraseña."""
+        VentanaCambiarPassword(self, self.responsable_sesion)
 
     def _mostrar_alta_productos(self):
         """Construye la interfaz de productos."""
@@ -207,12 +328,145 @@ class App(ctk.CTk):
             entry.pack(pady=2)
             self.client_entries[label_text] = entry
 
-        ctk.CTkButton(sidebar, text="GUARDAR CLIENTE ✔️", fg_color=CONFIG["colors"]["secondary"], height=45, font=("Inter", 14, "bold")).pack(pady=30, padx=40, fill="x")
+        # --- ÁREA DE DOCUMENTOS ---
+        ctk.CTkLabel(sidebar, text="DOCUMENTACIÓN", font=("Inter", 12, "bold"), text_color="#64748b").pack(pady=(20, 5))
+        
+        self.btn_adjuntar = ctk.CTkButton(sidebar, text="ADJUNTAR ARCHIVO 📎\n(PDF, JPG, PNG)", 
+                                          fg_color=CONFIG["colors"]["btn_input"], 
+                                          hover_color=CONFIG["colors"]["secondary"], 
+                                          height=60, font=("Inter", 12, "bold"),
+                                          command=self._adjuntar_documento_cliente)
+        self.btn_adjuntar.pack(pady=10, padx=40, fill="x")
 
-        # Panel Derecho (Placeholder)
-        derecho = ctk.CTkFrame(self, fg_color="transparent")
-        derecho.pack(side="right", fill="both", expand=True)
-        ctk.CTkLabel(derecho, text="Módulo de Clientes en construcción...", font=("Inter", 14, "italic"), text_color="#64748b").place(relx=0.5, rely=0.5, anchor="center")
+        self.lbl_info_adjunto = ctk.CTkLabel(sidebar, text="Sin documentos seleccionados", font=("Inter", 10, "italic"), text_color="#ef4444")
+        self.lbl_info_adjunto.pack(pady=(0, 10))
+
+        self.archivo_seleccionado_path = None
+        self.archivo_seleccionado_bin = None
+
+        ctk.CTkButton(sidebar, text="GUARDAR CLIENTE ✔️", fg_color=CONFIG["colors"]["secondary"], 
+                      height=45, font=("Inter", 14, "bold"),
+                      command=self._guardar_cliente_nube).pack(pady=20, padx=40, fill="x")
+
+        # Panel Derecho (Resumen y Listado de Clientes)
+        self.derecho_clientes = ctk.CTkFrame(self, fg_color="transparent")
+        self.derecho_clientes.pack(side="right", fill="both", expand=True)
+        
+        # Split vertical en el panel derecho: Arriba Pre-visualización, Abajo tabla de clientes (opcional)
+        self.preview_frame = ctk.CTkFrame(self.derecho_clientes, fg_color=CONFIG["colors"]["bg_input"], corner_radius=15)
+        self.preview_frame.pack(fill="x", padx=30, pady=30, ipady=40)
+        
+        self.lbl_preview_title = ctk.CTkLabel(self.preview_frame, text="VISTA PREVIA DEL DOCUMENTO", font=("Inter", 16, "bold"), text_color="#94a3b8")
+        self.lbl_preview_title.pack(pady=20)
+        
+        self.lbl_preview_icon = ctk.CTkLabel(self.preview_frame, text="📄", font=("Inter", 80))
+        self.lbl_preview_icon.pack(pady=10)
+        
+        self.lbl_preview_name = ctk.CTkLabel(self.preview_frame, text="Selecciona un archivo para previsualizarlo aquí", font=("Inter", 13, "italic"), text_color="#64748b")
+        self.lbl_preview_name.pack(pady=10)
+
+        # Botón para limpiar selección
+        self.btn_quitar_adjunto = ctk.CTkButton(self.preview_frame, text="Quitar Archivo ❌", fg_color="#ef4444", 
+                                                width=120, command=self._quitar_adjunto, state="disabled")
+        self.btn_quitar_adjunto.pack(pady=10)
+
+    def _adjuntar_documento_cliente(self):
+        """Abre el diálogo para seleccionar archivos y los prepara para subir."""
+        filetypes = [
+            ("Documentos e Imágenes", "*.pdf;*.png;*.jpg;*.jpeg"),
+            ("PDF", "*.pdf"),
+            ("Imágenes", "*.png;*.jpg;*.jpeg"),
+            ("Todos los archivos", "*.*")
+        ]
+        
+        path = filedialog.askopenfilename(title="Seleccionar documento del cliente", filetypes=filetypes)
+        
+        if path:
+            self.archivo_seleccionado_path = path
+            nombre_archivo = os.path.basename(path)
+            
+            # Cargar a binario
+            try:
+                with open(path, "rb") as f:
+                    self.archivo_seleccionado_bin = f.read()
+                
+                # Actualizar UI
+                self.lbl_info_adjunto.configure(text=f"✓ {nombre_archivo}", text_color=CONFIG["colors"]["primary"])
+                self.lbl_preview_name.configure(text=f"Nombre: {nombre_archivo}\nExtensión: {nombre_archivo.split('.')[-1].upper()}\nTamaño estimado: {len(self.archivo_seleccionado_bin)//1024} KB", text_color="white")
+                self.btn_quitar_adjunto.configure(state="normal")
+                
+                # Cambiar ícono según tipo
+                ext = nombre_archivo.lower().split('.')[-1]
+                icon = "🖼️" if ext in ['png', 'jpg', 'jpeg'] else "📑"
+                self.lbl_preview_icon.configure(text=icon)
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo leer el archivo:\n{e}")
+
+    def _quitar_adjunto(self):
+        self.archivo_seleccionado_path = None
+        self.archivo_seleccionado_bin = None
+        self.lbl_info_adjunto.configure(text="Sin documentos seleccionados", text_color="#ef4444")
+        self.lbl_preview_name.configure(text="Selecciona un archivo para previsualizarlo aquí", text_color="#64748b")
+        self.lbl_preview_icon.configure(text="📄")
+        self.btn_quitar_adjunto.configure(state="disabled")
+
+    def _guardar_cliente_nube(self):
+        """Extrae los campos del formulario y los guarda en la tabla 'clientes' de Supabase."""
+        # Extraer datos dinámicamente de los campos de texto
+        datos = {label.replace(":", ""): entry.get().strip() for label, entry in self.client_entries.items()}
+        
+        # Validaciones mínimas
+        if not datos.get("RFC") or not datos.get("NOMBRE O DENOMINACIÓN SOCIAL"):
+            messagebox.showwarning("Incompleto", "RFC y Nombre son campos obligatorios.")
+            return
+
+        try:
+            conn = psycopg2.connect(self.db_uri)
+            cursor = conn.cursor()
+            
+            sql = """
+                INSERT INTO clientes (rfc, nombre, cp, regimen, direccion, num_ext, num_int, archivo_nombre, archivo_data, fecha_registro, responsable)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (rfc) DO UPDATE 
+                SET nombre=EXCLUDED.nombre, cp=EXCLUDED.cp, regimen=EXCLUDED.regimen, 
+                    direccion=EXCLUDED.direccion, num_ext=EXCLUDED.num_ext, 
+                    num_int=EXCLUDED.num_int, archivo_nombre=EXCLUDED.archivo_nombre, 
+                    archivo_data=EXCLUDED.archivo_data, fecha_registro=EXCLUDED.fecha_registro,
+                    responsable=EXCLUDED.responsable
+            """
+            
+            nombre_archivo = os.path.basename(self.archivo_seleccionado_path) if self.archivo_seleccionado_path else None
+            fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
+            
+            valores = (
+                datos.get("RFC"),
+                datos.get("NOMBRE O DENOMINACIÓN SOCIAL"),
+                datos.get("CÓDIGO POSTAL"),
+                datos.get("RÉGIMEN"),
+                datos.get("DIRECCIÓN"),
+                datos.get("NÚMERO EXTERIOR"),
+                datos.get("NÚMERO INTERIOR (OPCIONAL)"),
+                nombre_archivo,
+                psycopg2.Binary(self.archivo_seleccionado_bin) if self.archivo_seleccionado_bin else None,
+                fecha_ahora,
+                self.responsable_sesion
+            )
+            
+            cursor.execute(sql, valores)
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            messagebox.showinfo("Éxito", f"El cliente {datos.get('RFC')} se ha guardado correctamente en la nube.")
+            
+            # Limpiar formulario tras éxito
+            for entry in self.client_entries.values(): entry.delete(0, 'end')
+            self._quitar_adjunto()
+            
+        except Exception as e:
+            messagebox.showerror("Error de Guardado", f"No se pudo guardar la información del cliente:\n{e}")
+
 
     def _finalizar_login(self, usuario):
         """Callback tras login exitoso."""
@@ -253,7 +507,12 @@ class App(ctk.CTk):
         self.btn_logout = ctk.CTkButton(self.form_container, text="Cerrar Sesión 🔑", height=24, width=120, 
                                         font=("Inter", 10), fg_color="#475569", hover_color="#dc2626",
                                         command=self.cerrar_sesion)
-        self.btn_logout.pack(pady=(0, 15))
+        self.btn_logout.pack(pady=(0, 5))
+
+        self.btn_seguridad = ctk.CTkButton(self.form_container, text="Seguridad 🔒", height=24, width=120, 
+                                           font=("Inter", 10), fg_color="transparent", text_color="#64748b",
+                                           hover_color="#1e293b", command=self.abrir_ventana_cambio_password)
+        self.btn_seguridad.pack(pady=(0, 15))
 
         # Inputs con etiquetas (pady reducido)
         self.crear_label(self.form_container, "Departamento:")
@@ -369,11 +628,16 @@ class App(ctk.CTk):
             ctk.set_appearance_mode("light")
 
     def _cargar_env(self):
-        """Carga las variables de entorno manejando el caso de ejecutable congelado."""
+        """Carga las variables de entorno soportando empaquetado PyInstaller."""
         import sys
         if getattr(sys, 'frozen', False):
-            application_path = os.path.dirname(sys.executable)
-            load_dotenv(os.path.join(application_path, '.env'))
+            # Ruta donde PyInstaller extrae los archivos temporales
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            env_path = os.path.join(base_path, '.env')
+            # Si no está empaquetado pero sí congelado, buscar junto al exe
+            if not os.path.exists(env_path):
+                env_path = os.path.join(os.path.dirname(sys.executable), '.env')
+            load_dotenv(env_path)
         else:
             load_dotenv()
         self.db_uri = os.getenv("SUPABASE_DB_URI")
@@ -393,6 +657,35 @@ class App(ctk.CTk):
                     departamento TEXT
                 )
             ''')
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    usuario TEXT PRIMARY KEY,
+                    password TEXT
+                )
+            ''')
+            
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS clientes (
+                    rfc TEXT PRIMARY KEY,
+                    nombre TEXT,
+                    cp TEXT,
+                    regimen TEXT,
+                    direccion TEXT,
+                    num_ext TEXT,
+                    num_int TEXT,
+                    archivo_nombre TEXT,
+                    archivo_data BYTEA,
+                    fecha_registro TEXT,
+                    responsable TEXT
+                )
+            ''')
+            
+            # Poblar usuarios iniciales si la tabla está vacía
+            self.cursor.execute("SELECT COUNT(*) FROM usuarios")
+            if self.cursor.fetchone()[0] == 0:
+                for user, pwd in CONFIG["options"]["usuarios"].items():
+                    self.cursor.execute("INSERT INTO usuarios (usuario, password) VALUES (%s, %s)", (user, pwd))
+                    
             self.conn.commit()
         except Exception as e:
             self.after(100, lambda ex=e: messagebox.showerror("Error de Conexión", f"No se pudo conectar a la nube: {ex}"))
