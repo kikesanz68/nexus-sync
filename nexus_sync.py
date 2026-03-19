@@ -9,6 +9,9 @@ import pandas as pd
 from dotenv import load_dotenv
 from tkcalendar import Calendar
 from fpdf import FPDF
+import pdfplumber
+import re
+from PIL import Image
 
 # --- CONFIGURACIÓN GLOBAL ---
 CONFIG = {
@@ -187,6 +190,78 @@ class VentanaCambiarPassword(ctk.CTkToplevel):
             messagebox.showerror("Error", "La contraseña actual es incorrecta.")
 
 
+class ScannerSAT:
+    """Clase especializada en analizar y extraer datos de la Constancia de Situación Fiscal."""
+    
+    @staticmethod
+    def extraer_datos(ruta_pdf):
+        datos = {}
+        thumbnail = None
+        
+        try:
+            with pdfplumber.open(ruta_pdf) as pdf:
+                # 1. Extraer miniatura de la primera página
+                primera_pag = pdf.pages[0]
+                img = primera_pag.to_image(resolution=50).original
+                thumbnail = img # PIL Image
+                
+                # 2. Extraer texto con tolerancia ajustada para recuperar espacios
+                full_text = ""
+                for page in pdf.pages:
+                    full_text += page.extract_text(x_tolerance=1.5) + "\n"
+
+            # 3. Mapeo de datos con Regex (usando patrones actualizados con espacios)
+            # RFC
+            rfc_match = re.search(r"RFC:\s*([A-Z&Ñ]{3,4}\d{6}[A-Z\d]{3})", full_text)
+            if rfc_match: datos["RFC:"] = rfc_match.group(1)
+            
+            # NOMBRE (Denominación/Razón Social con espacios detectados)
+            razon_match = re.search(r"Denominación/Razón Social:\s*(.*)", full_text)
+            if razon_match:
+                datos["NOMBRE O DENOMINACIÓN SOCIAL:"] = razon_match.group(1).split("\n")[0].strip()
+            else:
+                # Fallback cabecera
+                nombre_bloque = re.search(r"Registro Federal de Contribuyentes\s+(.*?)\s+Lugar y Fecha", full_text, re.DOTALL)
+                if nombre_bloque:
+                    datos["NOMBRE O DENOMINACIÓN SOCIAL:"] = nombre_bloque.group(1).replace("\n", " ").strip()
+
+            # CÓDIGO POSTAL
+            cp_match = re.search(r"Código Postal:\s*(\d{5})", full_text)
+            if cp_match: datos["CÓDIGO POSTAL:"] = cp_match.group(1)
+
+            # RÉGIMEN
+            regimen_match = re.search(r"Régimen:\s+(.*?)\s+\d{2}/\d{2}/\d{4}", full_text)
+            if regimen_match:
+                datos["RÉGIMEN:"] = regimen_match.group(1).split("\n")[0].strip()
+            else:
+                # Búsqueda más amplia por palabra Régimen
+                reg_fallback = re.search(r"Régimen (General de Ley Personas Morales|Simplificado de Confianza|de las Personas Físicas con Actividades Empresariales y Profesionales)", full_text)
+                if reg_fallback: datos["RÉGIMEN:"] = reg_fallback.group(0)
+
+            # DIRECCIÓN (Nombre de Vialidad + Nombre de la Colonia + Nombre del Municipio)
+            vialidad = re.search(r"Nombre de Vialidad:\s*(.*?)\s+Número Exterior", full_text)
+            colonia = re.search(r"Nombre de la Colonia:\s*(.*?)\s+Nombre de la Localidad", full_text)
+            municipio = re.search(r"Nombre del Municipio o Demarcación Territorial:\s*(.*?)\s+Nombre de la Entidad", full_text)
+            
+            partes_dir = []
+            if vialidad: partes_dir.append(vialidad.group(1).strip())
+            if colonia: partes_dir.append(colonia.group(1).strip())
+            if municipio: partes_dir.append(municipio.group(1).strip())
+            datos["DIRECCIÓN:"] = ", ".join(partes_dir)
+
+            # NÚMEROS
+            ext_match = re.search(r"Número Exterior:\s*(.*?)\s+Número Interior", full_text)
+            if ext_match: datos["NÚMERO EXTERIOR:"] = ext_match.group(1).strip()
+            
+            int_match = re.search(r"Número Interior:\s*(.*?)\s+Nombre de la Colonia", full_text)
+            if int_match: datos["NÚMERO INTERIOR (OPCIONAL):"] = int_match.group(1).strip()
+
+            return {"datos": datos, "thumbnail": thumbnail}
+        except Exception as e:
+            print(f"Error parseando SAT PDF: {e}")
+            return None
+
+
 class App(ctk.CTk):
     """
     Clase principal de la aplicación.
@@ -206,14 +281,16 @@ class App(ctk.CTk):
         self.codigo_nube_en_edicion = None
         self.codigo_siguiente = None
         
-        # Cargar variables de entorno
+        # Cargar configuraciones y DB
         self._cargar_env()
-              # Inicializar Base de Datos
         if not self.db_uri:
-            self.after(100, lambda: self._show_error_and_exit("No se encontró la variable SUPABASE_DB_URI en el archivo .env"))
+            self.after(100, lambda: self._show_error_and_exit("Falta SUPABASE_DB_URI en .env"))
             return
             
         self._inicializar_db()
+        
+        # Tamaño mínimo de seguridad (para que no se amontone el contenido)
+        self.minsize(1280, 800)
 
         # Iniciar proceso de Login
         self.after(100, lambda: VentanaLogin(self, self._finalizar_login))
@@ -306,7 +383,14 @@ class App(ctk.CTk):
         ctk.CTkButton(sidebar, text="← VOLVER AL MENÚ", fg_color="transparent", text_color="#64748b", font=("Inter", 10, "bold"), 
                       command=self.mostrar_menu_principal).pack(pady=(20, 10), padx=20, anchor="w")
 
-        ctk.CTkLabel(sidebar, text="ALTA DE CLIENTES", font=("Inter", 24, "bold"), text_color=CONFIG["colors"]["secondary"]).pack(pady=(20, 30))
+        ctk.CTkLabel(sidebar, text="ALTA DE CLIENTES", font=("Inter", 24, "bold"), text_color=CONFIG["colors"]["secondary"]).pack(pady=(20, 10))
+
+        # Botón para Importar desde PDF del SAT (Nuevo)
+        self.btn_import_sat = ctk.CTkButton(sidebar, text="AUTO-RELLENAR DESDE SAT 📑", 
+                                            fg_color="#0ea5e9", hover_color="#0284c7", 
+                                            height=40, font=("Inter", 12, "bold"),
+                                            command=self._importar_desde_sat)
+        self.btn_import_sat.pack(pady=(0, 20), padx=40, fill="x")
 
         form = ctk.CTkFrame(sidebar, fg_color="transparent")
         form.pack(fill="x", padx=40)
@@ -392,13 +476,23 @@ class App(ctk.CTk):
                 
                 # Actualizar UI
                 self.lbl_info_adjunto.configure(text=f"✓ {nombre_archivo}", text_color=CONFIG["colors"]["primary"])
-                self.lbl_preview_name.configure(text=f"Nombre: {nombre_archivo}\nExtensión: {nombre_archivo.split('.')[-1].upper()}\nTamaño estimado: {len(self.archivo_seleccionado_bin)//1024} KB", text_color="white")
+                self.lbl_preview_name.configure(text=f"Nombre: {nombre_archivo}\nExtensión: {nombre_archivo.split('.')[-1].upper()}\nTamaño estimado: {len(self.archivo_seleccionado_bin) // 1024} KB", text_color="white")
                 self.btn_quitar_adjunto.configure(state="normal")
                 
-                # Cambiar ícono según tipo
+                # Cambiar ícono o mostrar miniatura
                 ext = nombre_archivo.lower().split('.')[-1]
-                icon = "🖼️" if ext in ['png', 'jpg', 'jpeg'] else "📑"
-                self.lbl_preview_icon.configure(text=icon)
+                if ext == 'pdf':
+                    try:
+                        with pdfplumber.open(path) as pdf:
+                            img = pdf.pages[0].to_image(resolution=50).original
+                            self._mostrar_miniatura(img)
+                    except:
+                        self.lbl_preview_icon.configure(image="", text="📑")
+                elif ext in ['png', 'jpg', 'jpeg']:
+                    img = Image.open(path)
+                    self._mostrar_miniatura(img)
+                else:
+                    self.lbl_preview_icon.configure(image="", text="📑")
                 
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo leer el archivo:\n{e}")
@@ -408,8 +502,17 @@ class App(ctk.CTk):
         self.archivo_seleccionado_bin = None
         self.lbl_info_adjunto.configure(text="Sin documentos seleccionados", text_color="#ef4444")
         self.lbl_preview_name.configure(text="Selecciona un archivo para previsualizarlo aquí", text_color="#64748b")
-        self.lbl_preview_icon.configure(text="📄")
+        self.lbl_preview_icon.configure(image="", text="📄")
         self.btn_quitar_adjunto.configure(state="disabled")
+
+    def _mostrar_miniatura(self, pil_image):
+        """Convierte una imagen PIL a CTkImage y la muestra."""
+        # Redimensionar para miniatura
+        pil_image.thumbnail((250, 300))
+        ctk_img = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(pil_image.width, pil_image.height))
+        self.lbl_preview_icon.configure(image=ctk_img, text="")
+        # Guardar referencia para evitar recolección de basura
+        self.lbl_preview_icon.image = ctk_img
 
     def _guardar_cliente_nube(self):
         """Extrae los campos del formulario y los guarda en la tabla 'clientes' de Supabase."""
@@ -467,6 +570,40 @@ class App(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Error de Guardado", f"No se pudo guardar la información del cliente:\n{e}")
 
+    def _importar_desde_sat(self):
+        """Abre un PDF de Constancia de Situación Fiscal y rellena el formulario automáticamente."""
+        path = filedialog.askopenfilename(title="Seleccionar Constancia del SAT", 
+                                         filetypes=[("PDF SAT", "*.pdf")])
+        if not path: return
+        
+        res = ScannerSAT.extraer_datos(path)
+        
+        if res and res["datos"]:
+            datos_extraidos = res["datos"]
+            # Rellenar los campos
+            for label, valor in datos_extraidos.items():
+                if label in self.client_entries:
+                    self.client_entries[label].delete(0, 'end')
+                    self.client_entries[label].insert(0, str(valor))
+            
+            messagebox.showinfo("Éxito", "Datos extraídos correctamente del PDF del SAT.")
+            
+            # Autoseleccionar este archivo como adjunto también
+            self.archivo_seleccionado_path = path
+            try:
+                with open(path, "rb") as f:
+                    self.archivo_seleccionado_bin = f.read()
+                nombre = os.path.basename(path)
+                self.lbl_info_adjunto.configure(text=f"✓ {nombre}", text_color=CONFIG["colors"]["primary"])
+                self.lbl_preview_name.configure(text=f"Importado de SAT: {nombre}", text_color="white")
+                if res["thumbnail"]:
+                    self._mostrar_miniatura(res["thumbnail"])
+                else:
+                    self.lbl_preview_icon.configure(text="📑")
+                self.btn_quitar_adjunto.configure(state="normal")
+            except: pass
+        else:
+            messagebox.showerror("Error", "No se pudieron extraer datos legibles de este PDF. Asegúrate de que es una Constancia de Situación Fiscal original.")
 
     def _finalizar_login(self, usuario):
         """Callback tras login exitoso."""
@@ -525,16 +662,30 @@ class App(ctk.CTk):
         self.unit_menu.pack(pady=2)
 
         self.crear_label(self.form_container, "Código:")
+        self.frame_cod_row = ctk.CTkFrame(self.form_container, fg_color="transparent")
+        self.frame_cod_row.pack(fill="x")
+        
+        # Definir ancho según privilegios
+        es_admin = str(self.responsable_sesion).upper() == "ENRIQUE"
+        ancho_cod = 250 if es_admin else 300
+
         self.entry_cod = ctk.CTkEntry(
-            self.form_container,
+            self.frame_cod_row,
             placeholder_text="Auto-generado",
-            width=300,
+            width=ancho_cod,
             state="disabled",
             text_color=CONFIG["colors"]["primary"],
             fg_color=("white", "#1e293b"),
             border_color=CONFIG["colors"]["primary"]
         )
-        self.entry_cod.pack(pady=2)
+        self.entry_cod.pack(side="left", pady=2)
+        
+        # Botón para desbloquear edición manual de código (Solo para ENRIQUE)
+        if es_admin:
+            self.btn_lock = ctk.CTkButton(self.frame_cod_row, text="🔒", width=40, font=("Inter", 14), 
+                                          fg_color="transparent", text_color=CONFIG["colors"]["primary"], 
+                                          hover_color="#1e293b", command=self.toggle_bloqueo_codigo)
+            self.btn_lock.pack(side="right", padx=(5, 0))
 
         self.crear_label(self.form_container, "Descripción:")
         self.entry_prod = ctk.CTkEntry(self.form_container, placeholder_text="Nombre del producto...", width=300)
@@ -762,6 +913,17 @@ class App(ctk.CTk):
             self.lbl_aviso_sig.configure(text=f"(Código actual en campo: {valor})")
         except (ValueError, AttributeError):
             pass
+
+    def toggle_bloqueo_codigo(self):
+        """Permite habilitar/deshabilitar la edición manual del código por administración."""
+        if self.entry_cod.cget("state") == "disabled":
+            if messagebox.askyesno("Confirmar", "¿Deseas editar el código manualmente?\nEsto puede causar duplicados si no se tiene cuidado."):
+                self.entry_cod.configure(state="normal", border_color="#f59e0b")
+                self.btn_lock.configure(text="🔓", text_color="#f59e0b")
+        else:
+            self.entry_cod.configure(state="disabled", border_color=CONFIG["colors"]["primary"])
+            self.btn_lock.configure(text="🔒", text_color=CONFIG["colors"]["primary"])
+            self.actualizar_codigo_siguiente()  # Al bloquear, recalculamos para asegurar consistencia
 
 
     # --- LÓGICA DE CÓDIGO SIGUIENTE ---
@@ -1231,11 +1393,10 @@ class App(ctk.CTk):
         seleccionados = [f"• {i['datos'][0]} - {i['datos'][1]} ({i['datos'][2]}) [{i['datos'][5]}]" for i in self.lista_productos_widgets if i['var'].get()]
         if seleccionados:
             pyperclip.copy("Buen día, sus códigos son:\n" + "\n".join(seleccionados))
-            messagebox.showinfo("Copiado", "Formato para envío listo.")
 
     def copiar_especifico(self, idx):
         sel = [i['datos'][idx] for i in self.lista_productos_widgets if i['var'].get()]
-        if sel: pyperclip.copy("\n".join(sel)); messagebox.showinfo("Copiado", "Datos copiados.")
+        if sel: pyperclip.copy("\n".join(sel))
 
     def guardar_archivo(self):
         elementos_a_guardar = [i for i in self.lista_productos_widgets if i['var'].get()]
